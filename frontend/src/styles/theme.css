@@ -1,0 +1,63 @@
+/* ============================================================
+   theme.css — Dreamscape Mapper design tokens & keyframes
+   ============================================================ */
+
+:root {
+  --bg:          #FFFFFF;
+  --text:        #000000;
+  --accent:      #6F6F6F;
+  --accent-soft: rgba(111, 111, 111, 0.12);
+  --glass-bg:    rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(111, 111, 111, 0.18);
+  --radius:      16px;
+  --radius-sm:   8px;
+  --transition:  0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  --font-serif:  'Instrument Serif', Georgia, serif;
+  --font-sans:   'Inter', system-ui, sans-serif;
+}
+
+/* ── Fade-Rise keyframes ─────────────────────────────────── */
+@keyframes fade-rise {
+  from { opacity: 0; transform: translateY(32px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+
+/* ── Animation utility classes ───────────────────────────── */
+.fade-rise {
+  animation: fade-rise 0.7s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.fade-rise-delay {
+  animation: fade-rise 0.7s 0.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.fade-rise-delay-2 {
+  animation: fade-rise 0.7s 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* ── Glassmorphism helper ────────────────────────────────── */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+}
+
+/* ── Shimmer placeholder ─────────────────────────────────── */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    #f0f0f0 25%,
+    #e0e0e0 37%,
+    #f0f0f0 63%
+  );
+  background-size: 600px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: var(--radius-sm);
+}
