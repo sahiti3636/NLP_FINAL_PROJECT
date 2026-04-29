@@ -36,10 +36,41 @@ def blue(t):     return _c("94", t)
 
 # ---------- pipeline import ----------
 try:
-    from dream_pipeline import run_pipeline
+    from dream_pipeline_p import DreamPipelineModel, run_production_pipeline
+    _prod_model = DreamPipelineModel()
+
+    def run_pipeline(dream_text: str) -> dict:
+        """Thin shim: runs production pipeline and normalises keys for the UI."""
+        raw = run_production_pipeline(dream_text, _prod_model)
+        if "error" in raw:
+            raise ValueError(raw["error"])
+        # Map semantic_relations (list of {agent,action,target}) to {Agent,Action,Target}
+        sem_rels = [
+            {
+                "Agent":  s.get("agent",  "Unknown"),
+                "Action": s.get("action", "Unknown"),
+                "Target": s.get("target", "Unknown"),
+            }
+            for s in raw.get("semantic_relations", [])
+        ] or [{"Agent": "Unknown", "Action": "Unknown", "Target": "Unknown"}]
+
+        return {
+            "Topic_Cluster":    raw["topic_cluster"],
+            "Dominant_Emotion": raw["dominant_emotion"],
+            "Key_Entities":     raw["key_entities"],
+            "Semantic_Relation": sem_rels,
+            "Emotion_Vector":   raw["emotion_vector"],
+            "Cluster_Keywords": raw.get("cluster_keywords", []),
+            "Coreference_Map":  {},  # not produced by production pipeline
+            "Global_Stat":      raw.get("summary", ""),
+        }
+
 except ImportError:
-    print(red("✗  dream_pipeline.py not found in the current directory."))
-    print(dim("   Place dream_pipeline.py alongside dream_ui.py and retry."))
+    print(red("✗  dream_pipeline_p.py not found in the current directory."))
+    print(dim("   Place dream_pipeline_p.py alongside dream_ui.py and retry."))
+    sys.exit(1)
+except Exception as _load_err:
+    print(red(f"✗  Failed to load production model: {_load_err}"))
     sys.exit(1)
 
 # ---------- constants ----------
@@ -138,8 +169,9 @@ def _render_result(result: dict):
     print(f"\n  {bold('Key Entities')}")
     print(f"    {', '.join(green(e) for e in result['Key_Entities'])}")
 
-    # Semantic relation
-    sr = result["Semantic_Relation"]
+    # Semantic relation — pick the first relation from the list
+    sr_list = result.get("Semantic_Relation", [])
+    sr = sr_list[0] if sr_list else {"Agent": "Unknown", "Action": "Unknown", "Target": "Unknown"}
     print(f"\n  {bold('Semantic Relation')}")
     print(
         f"    {yellow(sr['Agent'])}  {dim('─[')}  {cyan(sr['Action'])}  {dim(']─▶')}  {magenta(sr['Target'])}"

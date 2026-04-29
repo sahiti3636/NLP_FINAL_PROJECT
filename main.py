@@ -2,14 +2,23 @@
 main.py
 =======
 Dreamscape Mapper — FastAPI Backend
-Wraps dream_pipeline.py and exposes POST /analyze
+Wraps dream_pipeline_p.py (production pipeline) and exposes POST /analyze
 """
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dream_pipeline import run_pipeline
+from dream_pipeline_p import DreamPipelineModel, run_production_pipeline
 import json
+
+# ---------------------------------------------------------------------------
+# Load model once at startup (heavy — BiLSTM + embeddings)
+# ---------------------------------------------------------------------------
+try:
+    _MODEL = DreamPipelineModel()
+except Exception as _e:
+    _MODEL = None
+    print(f"WARNING: Could not load production model: {_e}")
 
 app = FastAPI(
     title="Dreamscape Mapper API",
@@ -78,37 +87,50 @@ def health():
 @app.post("/analyze", response_model=AnalysisResponse)
 def analyze_dream(payload: DreamRequest):
     """
-    Run the 11-step NRC-based dream pipeline on the supplied text.
+    Run the production BiLSTM dream pipeline on the supplied text.
     Returns a structured thematic-emotional JSON record.
     """
+    if _MODEL is None:
+        raise HTTPException(status_code=503, detail="Production model failed to load at startup.")
+
     dream_text = payload.dream_text.strip()
     if not dream_text:
         raise HTTPException(status_code=422, detail="dream_text must not be empty.")
 
     try:
-        result = run_pipeline(dream_text)
+        result = run_production_pipeline(dream_text, _MODEL)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Pipeline error: {str(exc)}")
 
-    # Strip valence dimensions (positive / negative) — keep only the 8 core NRC emotions
+    if "error" in result:
+        raise HTTPException(status_code=422, detail=result["error"])
+
+    # Keep only the 8 core NRC emotions (strip valence if present)
     core_emotions = ["anger", "anticipation", "disgust", "fear", "joy", "sadness", "surprise", "trust"]
     emotion_vector = {
-        k: round(result["Emotion_Vector"].get(k, 0.0), 4)
+        k: round(result["emotion_vector"].get(k, 0.0), 4)
         for k in core_emotions
     }
 
+    # dream_pipeline_p uses lowercase keys for semantic relations: agent/action/target
+    semantic_relations = result.get("semantic_relations", [])
+
     return AnalysisResponse(
-        Topic_Cluster=result["Topic_Cluster"],
-        Dominant_Emotion=result["Dominant_Emotion"],
-        Key_Entities=result["Key_Entities"],
+        Topic_Cluster=result["topic_cluster"],
+        Dominant_Emotion=result["dominant_emotion"],
+        Key_Entities=result["key_entities"],
         Semantic_Relation=[
-            SemanticRelation(Agent=s["Agent"], Action=s["Action"], Target=s["Target"])
-            for s in result["Semantic_Relation"]
+            SemanticRelation(
+                Agent=s.get("agent") or "Unknown",
+                Action=s.get("action") or "Unknown",
+                Target=s.get("target") or "Unknown",
+            )
+            for s in semantic_relations
         ],
         Emotion_Vector=emotion_vector,
-        Global_Stat=result["Global_Stat"],
+        Global_Stat=result.get("summary", ""),
     )
 
 
