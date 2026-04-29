@@ -1,14 +1,10 @@
 """
 dream_ui.py
-===========
-Dreamscape Mapper — Interactive Terminal Interface
-Run with:  python dream_ui.py
+---
+terminal REPL for the dream pipeline
+run with: python dream_ui.py
 
-Wraps dream_pipeline.run_pipeline() with a user-friendly REPL that:
-  • Accepts free-form dream text (multi-line supported)
-  • Displays the structured output in a readable, colour-highlighted format
-  • Offers a simple emotion bar chart in the terminal
-  • Supports commands: help, demo, clear, quit
+supports multi-line input, commands: help, demo, clear, quit
 """
 
 import json
@@ -17,7 +13,7 @@ import os
 import textwrap
 from collections import OrderedDict
 
-# ---------- colour helpers (ANSI, gracefully disabled on Windows) ----------
+# ansi colors — disabled on windows or non-tty
 _USE_COLOR = sys.stdout.isatty() and os.name != "nt"
 
 def _c(code: str, text: str) -> str:
@@ -34,17 +30,18 @@ def red(t):      return _c("91", t)
 def dim(t):      return _c("2", t)
 def blue(t):     return _c("94", t)
 
-# ---------- pipeline import ----------
+# try loading prod pipeline — bail out loudly if it fails
 try:
     from dream_pipeline_p import DreamPipelineModel, run_production_pipeline
     _prod_model = DreamPipelineModel()
 
+    # thin shim: runs prod pipeline and normalizes keys for the UI
     def run_pipeline(dream_text: str) -> dict:
-        """Thin shim: runs production pipeline and normalises keys for the UI."""
+        """thin shim: runs prod pipeline and normalizes keys for the UI"""
         raw = run_production_pipeline(dream_text, _prod_model)
         if "error" in raw:
             raise ValueError(raw["error"])
-        # Map semantic_relations (list of {agent,action,target}) to {Agent,Action,Target}
+        # pipeline returns lowercase agent/action/target — UI expects PascalCase
         sem_rels = [
             {
                 "Agent":  s.get("agent",  "Unknown"),
@@ -61,7 +58,7 @@ try:
             "Semantic_Relation": sem_rels,
             "Emotion_Vector":   raw["emotion_vector"],
             "Cluster_Keywords": raw.get("cluster_keywords", []),
-            "Coreference_Map":  {},  # not produced by production pipeline
+            "Coreference_Map":  {},  # prod pipeline doesn't produce this
             "Global_Stat":      raw.get("summary", ""),
         }
 
@@ -73,7 +70,6 @@ except Exception as _load_err:
     print(red(f"✗  Failed to load production model: {_load_err}"))
     sys.exit(1)
 
-# ---------- constants ----------
 BANNER = f"""
 {cyan('╔══════════════════════════════════════════════════════════════╗')}
 {cyan('║')}   {bold('🌙  Dreamscape Mapper  —  Thematic & Affective Analyser')}   {cyan('║')}
@@ -119,20 +115,21 @@ EMOTION_COLORS = {
 }
 
 
-# ---------- rendering helpers ----------
-
+# print a thin separator line
 def _separator(char="─", width=64):
     print(dim(char * width))
 
 
+# print a labeled section header with separators
 def _header(text: str):
     _separator()
     print(f"  {bold(text)}")
     _separator()
 
 
+# render ascii bar chart for the NRC emotion dict
 def _render_emotion_bars(emotion_vector: dict):
-    """Print a simple ASCII bar chart for the NRC emotion vector."""
+    """ascii bar chart for NRC emotion vector"""
     print(f"\n  {bold('Emotion Profile  (NRC)')}")
     _separator("·")
 
@@ -150,26 +147,24 @@ def _render_emotion_bars(emotion_vector: dict):
         print(f"  {dim(label)}  {color(bar)}  {score}")
 
 
+# pretty-print the full pipeline result to terminal
 def _render_result(result: dict):
-    """Pretty-print the full pipeline output."""
+    """pretty-print pipeline output"""
     print()
     _header("📋  Analysis Result")
 
-    # Topic cluster
     print(f"\n  {bold('Topic Cluster')}     {cyan(result['Topic_Cluster'])}")
 
-    # Dominant emotion
     dom = result["Dominant_Emotion"]
     dom_color = EMOTION_COLORS.get(dom.lower(), yellow)
     print(f"  {bold('Dominant Emotion')}  {dom_color(dom)}")
 
-    # Key entities
     entities_str = "  " + dim("·") + "  "
     entities_str += f"  {dim('·')}  ".join(green(e) for e in result["Key_Entities"])
     print(f"\n  {bold('Key Entities')}")
     print(f"    {', '.join(green(e) for e in result['Key_Entities'])}")
 
-    # Semantic relation — pick the first relation from the list
+    # just show the first relation — there might be more but idk what's useful
     sr_list = result.get("Semantic_Relation", [])
     sr = sr_list[0] if sr_list else {"Agent": "Unknown", "Action": "Unknown", "Target": "Unknown"}
     print(f"\n  {bold('Semantic Relation')}")
@@ -177,33 +172,29 @@ def _render_result(result: dict):
         f"    {yellow(sr['Agent'])}  {dim('─[')}  {cyan(sr['Action'])}  {dim(']─▶')}  {magenta(sr['Target'])}"
     )
 
-    # Cluster keywords
     if result.get("Cluster_Keywords"):
         kw = "  ".join(dim(k) for k in result["Cluster_Keywords"])
         print(f"\n  {bold('Cluster Keywords')}  {kw}")
 
-    # Coreference
     if result.get("Coreference_Map"):
         cr = ", ".join(f"{dim(k)} → {green(v)}" for k, v in result["Coreference_Map"].items())
         print(f"  {bold('Coreference')}       {cr}")
 
-    # Emotion bars
     _render_emotion_bars(result["Emotion_Vector"])
 
-    # Global stat
     print(f"\n  {bold('Global Stat')}")
     wrapped = textwrap.fill(result["Global_Stat"], width=60, initial_indent="    ", subsequent_indent="    ")
     print(dim(wrapped))
 
-    # Raw JSON toggle
     print(f"\n  {dim('─── raw JSON ───────────────────────────────────────────────')}")
     print(dim(json.dumps(result, indent=4)))
     _separator()
     print()
 
 
+# collect multi-line dream input until blank line or ctrl-d
 def _read_multiline_dream() -> str:
-    """Read dream text; blank line or single Enter signals end of input."""
+    """blank line or ctrl-d ends input"""
     print(
         f"\n{bold('Enter your dream')} "
         f"{dim('(press Enter twice or Ctrl-D to submit, Ctrl-C to cancel)')}\n"
@@ -212,16 +203,15 @@ def _read_multiline_dream() -> str:
     try:
         while True:
             line = input()
-            if line == "" and lines:       # blank line after content → submit
+            if line == "" and lines:  # blank after content → submit
                 break
             lines.append(line)
     except EOFError:
-        pass  # Ctrl-D
+        pass  # ctrl-d
     return " ".join(lines).strip()
 
 
-# ---------- main REPL ----------
-
+# REPL loop — handles commands and funnels text to the pipeline
 def main():
     print(BANNER)
     print(f"  Type {yellow('help')} for commands, {yellow('demo')} to run an example, {yellow('quit')} to exit.\n")
@@ -250,7 +240,7 @@ def main():
             _run_and_display(DEMO_DREAM)
 
         elif cmd == "":
-            # User pressed Enter at the prompt — go to dream entry
+            # blank enter at prompt — go to multiline dream input
             dream = _read_multiline_dream()
             if dream:
                 _run_and_display(dream)
@@ -258,12 +248,13 @@ def main():
                 print(dim("  (no input received)"))
 
         else:
-            # Treat any other input as the dream itself (single-line convenience)
+            # anything else treated as single-line dream input
             _run_and_display(cmd)
 
 
+# run pipeline on text and display result, catch and print any errors
 def _run_and_display(dream_text: str):
-    """Run pipeline on dream_text and display the result."""
+    """run pipeline and show results, catch errors loudly"""
     if not dream_text.strip():
         print(red("  ✗  Empty input — please enter a dream narrative."))
         return

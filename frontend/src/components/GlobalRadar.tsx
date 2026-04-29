@@ -24,8 +24,8 @@ export default function GlobalRadar({ emotionVector }: GlobalRadarProps) {
       {
         label: 'Global Affective Average',
         data: EMOTIONS.map(e => +(emotionVector[e] ?? 0).toFixed(3)),
-        backgroundColor: 'rgba(111, 111, 111, 0.4)', // glowing #6F6F6F fill approx
-        borderColor: '#ffffff', // thin white lines
+        backgroundColor: 'rgba(111, 111, 111, 0.4)', // matches accent color
+        borderColor: '#ffffff',
         borderWidth: 1,
         pointBackgroundColor: '#ffffff',
         pointBorderColor: '#ffffff',
@@ -55,7 +55,7 @@ export default function GlobalRadar({ emotionVector }: GlobalRadarProps) {
           }
         },
         ticks: {
-          display: false, // hide the scale numbers on radar
+          display: false, // numbers on radar look noisy, hide them
         }
       }
     },

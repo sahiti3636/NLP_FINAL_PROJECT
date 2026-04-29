@@ -1,11 +1,11 @@
 """
-Dreamscape Mapper — Step 7 & 8
-Step 7: Unsupervised Theme Discovery  (UMAP → HDBSCAN)
-Step 8: Keyword Extraction per Cluster (c-TF-IDF)
+step 7 & 8
+step 7: unsupervised theme discovery  (UMAP → HDBSCAN)
+step 8: keyword extraction per cluster (c-TF-IDF)
 
-Input  : step6_enriched_embeddings.npy  (296000, 556)
+input  : step6_enriched_embeddings.npy  (296000, 556)
          step6_metadata.json            (296000 segments)
-Output : step7_cluster_labels.npy       — cluster id per segment (-1 = noise)
+output : step7_cluster_labels.npy       — cluster id per segment (-1 = noise)
          step8_keywords.json            — top keywords per cluster
          step7_8_results.json           — full per-cluster summary
 """
@@ -18,7 +18,6 @@ import math
 import warnings
 warnings.filterwarnings("ignore")
 
-# ── 0. Load inputs ────────────────────────────────────────────────────────────
 print("=" * 60)
 print("Loading embeddings and metadata ...")
 embeddings = np.load("data_models/step6_enriched_embeddings.npy")   # (296000, 556)
@@ -28,12 +27,10 @@ with open("jsons/step6_metadata.json") as f:
 print(f"  Embeddings : {embeddings.shape}  dtype={embeddings.dtype}")
 print(f"  Segments   : {len(metadata)}")
 
-# ── 1. Sub-sample for UMAP (full 296k is very slow on UMAP; we use all for HDBSCAN) ──
-# We run UMAP on a representative sample, train the UMAP model, then transform all.
-# This is the standard BERTopic-style approach for large corpora.
-
-SAMPLE_SIZE = 50_000          # used to FIT umap; full set is transformed after
-UMAP_COMPONENTS = 10          # dimensionality fed to HDBSCAN
+# UMAP on full 296k is very slow — fit on a sample, transform all
+# standard bertopic-style approach for large corpora
+SAMPLE_SIZE = 50_000          # fit umap on this; transform full set after
+UMAP_COMPONENTS = 10          # dims fed to HDBSCAN
 RANDOM_STATE = 42
 
 print("\n" + "=" * 60)
@@ -49,7 +46,7 @@ sample_emb  = embeddings[sample_idx]
 umap_model = UMAP(
     n_components=UMAP_COMPONENTS,
     n_neighbors=15,          # local neighborhood size
-    min_dist=0.0,            # 0.0 keeps clusters tight — better for HDBSCAN
+    min_dist=0.0,            # keep clusters tight — better for HDBSCAN
     metric="cosine",
     random_state=RANDOM_STATE,
     low_memory=True,         # important for large datasets
@@ -59,7 +56,7 @@ umap_model = UMAP(
 umap_model.fit(sample_emb)
 print("  UMAP fitted. Transforming full corpus ...")
 
-# Transform in batches to avoid memory spikes
+# transform in batches to avoid memory spikes
 BATCH = 10_000
 reduced = np.zeros((len(embeddings), UMAP_COMPONENTS), dtype=np.float32)
 for start in range(0, len(embeddings), BATCH):
@@ -72,23 +69,22 @@ print(f"  Reduced shape: {reduced.shape}")
 np.save("data_models/step7_umap_reduced.npy", reduced)
 print("  Saved → step7_umap_reduced.npy")
 
-# ── 2. HDBSCAN clustering ─────────────────────────────────────────────────────
 print("\n" + "=" * 60)
 print("STEP 7b — HDBSCAN clustering ...")
 
 import hdbscan
 
 clusterer = hdbscan.HDBSCAN(
-    min_cluster_size=100,    # minimum segments per theme cluster
+    min_cluster_size=100,    # min segments per theme cluster
     min_samples=10,          # controls noise sensitivity
     metric="euclidean",      # on UMAP-reduced space
-    cluster_selection_method="eom",   # Excess of Mass — finds varied cluster sizes
-    prediction_data=True,    # needed if you want soft cluster membership later
-    core_dist_n_jobs=-1,     # use all CPU cores
+    cluster_selection_method="eom",   # excess of mass — finds varied sizes
+    prediction_data=True,    # needed for soft membership later
+    core_dist_n_jobs=-1,     # all CPU cores
 )
 
 clusterer.fit(reduced)
-labels = clusterer.labels_          # -1 = noise/unclustered
+labels = clusterer.labels_          # -1 = noise
 n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
 noise_count = np.sum(labels == -1)
 
@@ -104,7 +100,6 @@ for lbl, cnt in sorted(label_counts.items(), key=lambda x: -x[1])[:11]:
 np.save("data_models/step7_cluster_labels.npy", labels)
 print("  Saved → step7_cluster_labels.npy")
 
-# ── 3. c-TF-IDF keyword extraction ───────────────────────────────────────────
 print("\n" + "=" * 60)
 print("STEP 8 — c-TF-IDF keyword extraction per cluster ...")
 
@@ -124,13 +119,13 @@ STOPWORDS = {
 }
 
 def tokenize(text):
-    """Simple word tokenizer — lowercase, letters only, min length 3."""
+    """lowercase, letters only, min length 3"""
     if not isinstance(text, str):
         return []
     return [w for w in re.findall(r"[a-z]+", text.lower())
             if len(w) >= 3 and w not in STOPWORDS]
 
-# Build per-cluster document (concatenation of all segment tokens)
+# concat all segment tokens per cluster
 print("  Building cluster documents ...")
 cluster_docs = defaultdict(list)   # cluster_id → flat token list
 for idx, lbl in enumerate(labels):
@@ -139,7 +134,7 @@ for idx, lbl in enumerate(labels):
     tokens = tokenize(metadata[idx].get("text", ""))
     cluster_docs[lbl].extend(tokens)
 
-# TF per cluster: term frequency within each cluster
+# TF per cluster
 print("  Computing TF per cluster ...")
 cluster_tf = {}
 for lbl, tokens in cluster_docs.items():
@@ -148,12 +143,12 @@ for lbl, tokens in cluster_docs.items():
     # normalize by cluster size
     cluster_tf[lbl] = {w: c / total for w, c in tf.items()}
 
-# IDF across clusters: how rare is a word across ALL clusters
+# IDF across clusters
 print("  Computing IDF across clusters ...")
 all_cluster_ids = list(cluster_tf.keys())
 num_clusters = len(all_cluster_ids)
 
-# df[word] = number of clusters in which word appears
+# df[word] = number of clusters where word appears
 df = Counter()
 for lbl, tf in cluster_tf.items():
     for word in tf:
@@ -161,7 +156,7 @@ for lbl, tf in cluster_tf.items():
 
 idf = {word: log(1 + num_clusters / (1 + freq)) for word, freq in df.items()}
 
-# c-TF-IDF score = TF_cluster * IDF_global
+# c-TF-IDF = TF_cluster * IDF_global
 TOP_K = 15   # keywords per cluster
 cluster_keywords = {}
 for lbl in all_cluster_ids:
@@ -174,7 +169,6 @@ print("\n  Sample keywords (first 5 clusters):")
 for lbl in sorted(cluster_keywords)[:5]:
     print(f"    Cluster {lbl:>3}: {', '.join(cluster_keywords[lbl])}")
 
-# ── 4. Compute dominant emotion per cluster ───────────────────────────────────
 print("\n  Computing dominant emotion per cluster ...")
 
 EMOTION_LABELS = [
@@ -210,16 +204,14 @@ for lbl in all_cluster_ids:
         cluster_dominant_emotion[lbl] = "unknown"
         cluster_emotion_avg[lbl] = {}
 
-# ── 5. Save all results ───────────────────────────────────────────────────────
 print("\n" + "=" * 60)
 print("Saving outputs ...")
 
-# step8_keywords.json
 with open("jsons/step8_keywords.json", "w") as f:
     json.dump({str(k): v for k, v in cluster_keywords.items()}, f, indent=2)
 print("  Saved → step8_keywords.json")
 
-# step7_8_results.json — full summary per cluster, ready for Step 9
+# full cluster summary — step9 topic label gets filled in later
 results = []
 for lbl in sorted(all_cluster_ids):
     size = label_counts[lbl]
@@ -229,15 +221,13 @@ for lbl in sorted(all_cluster_ids):
         "keywords":          cluster_keywords.get(lbl, []),
         "dominant_emotion":  cluster_dominant_emotion.get(lbl, "unknown"),
         "emotion_avg":       cluster_emotion_avg.get(lbl, {}),
-        # topic_label left blank — Step 9 (T5) will fill this
-        "topic_label":       "",
+        "topic_label":       "",  # step9 fills this
     })
 
 with open("jsons/step7_8_results.json", "w") as f:
     json.dump(results, f, indent=2)
 print("  Saved → step7_8_results.json")
 
-# ── 6. Final summary ──────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
 print("DONE — Summary")
 print(f"  Total segments       : {len(embeddings):>8}")

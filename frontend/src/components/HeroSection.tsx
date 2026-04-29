@@ -4,8 +4,8 @@ const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_083109_283f3553-e28f-428b-a723-d639c617eb2b.mp4';
 
 const FADE_IN_DURATION = 0.5;  // seconds
-const FADE_OUT_BEFORE = 0.5;  // seconds before end
-const RESET_GAP_MS = 100;  // ms gap between loops
+const FADE_OUT_BEFORE = 0.5;  // seconds before video ends
+const RESET_GAP_MS = 100;  // pause between loops so it doesn't flash
 
 interface HeroSectionProps {
   onExplore: () => void;
@@ -26,20 +26,19 @@ export default function HeroSection({ onExplore, onGlobalInsights }: HeroSection
 
       const timeLeft = duration - currentTime;
 
-      // Fade-in
+      // fade in at start
       if (currentTime < FADE_IN_DURATION) {
         video.style.opacity = String(currentTime / FADE_IN_DURATION);
       }
-      // Fade-out
+      // fade out near end
       else if (timeLeft < FADE_OUT_BEFORE) {
         video.style.opacity = String(Math.max(0, timeLeft / FADE_OUT_BEFORE));
       }
-      // Fully visible
       else {
         video.style.opacity = '1';
       }
 
-      // Loop trigger
+      // reset and loop
       if (timeLeft < 0.08) {
         video.style.opacity = '0';
         video.pause();
@@ -75,7 +74,7 @@ export default function HeroSection({ onExplore, onGlobalInsights }: HeroSection
         justifyContent: 'center',
       }}
     >
-      {/* ── Background video ── */}
+      {/* bg video */}
       <video
         ref={videoRef}
         src={VIDEO_URL}
@@ -94,7 +93,7 @@ export default function HeroSection({ onExplore, onGlobalInsights }: HeroSection
         }}
       />
 
-      {/* ── Dark overlay ── */}
+      {/* dark overlay so text is readable */}
       <div
         style={{
           position: 'absolute',
@@ -104,7 +103,7 @@ export default function HeroSection({ onExplore, onGlobalInsights }: HeroSection
         }}
       />
 
-      {/* ── Navigation ── */}
+      {/* nav bar */}
       <nav
         className="fade-rise"
         style={{
@@ -153,7 +152,7 @@ export default function HeroSection({ onExplore, onGlobalInsights }: HeroSection
         </div>
       </nav>
 
-      {/* ── Hero copy ── */}
+      {/* hero text */}
       <div
         style={{
           position: 'relative',
@@ -236,7 +235,7 @@ export default function HeroSection({ onExplore, onGlobalInsights }: HeroSection
         </button>
       </div>
 
-      {/* ── Scroll indicator ── */}
+      {/* scroll hint at bottom */}
       <div
         style={{
           position: 'absolute',

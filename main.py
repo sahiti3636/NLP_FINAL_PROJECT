@@ -1,8 +1,7 @@
 """
 main.py
-=======
-Dreamscape Mapper — FastAPI Backend
-Wraps dream_pipeline_p.py (production pipeline) and exposes POST /analyze
+---
+fastapi backend — wraps dream_pipeline_p.py and exposes POST /analyze
 """
 
 from fastapi import FastAPI, HTTPException
@@ -11,9 +10,7 @@ from pydantic import BaseModel
 from dream_pipeline_p import DreamPipelineModel, run_production_pipeline
 import json
 
-# ---------------------------------------------------------------------------
-# Load model once at startup (heavy — BiLSTM + embeddings)
-# ---------------------------------------------------------------------------
+# load once at startup — bilstm + embeddings are heavy, don't reload per request
 try:
     _MODEL = DreamPipelineModel()
 except Exception as _e:
@@ -26,9 +23,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# ---------------------------------------------------------------------------
-# CORS — allow all origins for local React development
-# ---------------------------------------------------------------------------
+# allow all origins for local react dev — tighten before any real deployment
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,9 +33,7 @@ app.add_middleware(
 )
 
 
-# ---------------------------------------------------------------------------
-# Request / Response Schemas
-# ---------------------------------------------------------------------------
+# request / response schemas
 
 class DreamRequest(BaseModel):
     dream_text: str
@@ -75,21 +68,16 @@ class GlobalInsightsResponse(BaseModel):
     top_themes: list[Theme]
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
+# health check — just confirms the service is up
 @app.get("/")
 def health():
     return {"status": "ok", "service": "Dreamscape Mapper API"}
 
 
+# main endpoint — runs bilstm pipeline on dream text and returns structured result
 @app.post("/analyze", response_model=AnalysisResponse)
 def analyze_dream(payload: DreamRequest):
-    """
-    Run the production BiLSTM dream pipeline on the supplied text.
-    Returns a structured thematic-emotional JSON record.
-    """
+    """run bilstm pipeline on input text, return themed/emotional json"""
     if _MODEL is None:
         raise HTTPException(status_code=503, detail="Production model failed to load at startup.")
 
@@ -107,14 +95,14 @@ def analyze_dream(payload: DreamRequest):
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
-    # Keep only the 8 core NRC emotions (strip valence if present)
+    # strip valence keys — only keep 8 core NRC emotions
     core_emotions = ["anger", "anticipation", "disgust", "fear", "joy", "sadness", "surprise", "trust"]
     emotion_vector = {
         k: round(result["emotion_vector"].get(k, 0.0), 4)
         for k in core_emotions
     }
 
-    # dream_pipeline_p uses lowercase keys for semantic relations: agent/action/target
+    # pipeline uses lowercase keys: agent/action/target — map to PascalCase for response schema
     semantic_relations = result.get("semantic_relations", [])
 
     return AnalysisResponse(
@@ -134,11 +122,10 @@ def analyze_dream(payload: DreamRequest):
     )
 
 
+# aggregate stats from step9/10/11 jsons for the global insights dashboard
 @app.get("/global-insights", response_model=GlobalInsightsResponse)
 def get_global_insights():
-    """
-    Return global statistics to populate the Global Insights dashboard.
-    """
+    """aggregate stats for the global insights dashboard"""
     try:
         with open('jsons/step9_results.json', 'r') as f:
             step9 = json.load(f)
@@ -146,22 +133,22 @@ def get_global_insights():
             step11 = json.load(f)
         with open('jsons/dream_annotations.json', 'r') as f:
             annotations = json.load(f)
-        
+
         total_dreams = len(annotations)
         unique_archetypes = len(set(x["topic_label"] for x in step9 if "topic_label" in x))
-        
+
         total_keywords = sum(len(x.get("keywords", [])) for x in step9)
         semantic_density = total_keywords / max(len(step9), 1)
-        
+
         global_radar = step11.get("global_affective_averages", {})
-        
+
         dominant_tone = max(global_radar.items(), key=lambda k: k[1])[0] if global_radar else "Unknown"
         dominant_tone = dominant_tone.capitalize()
-        
-        # Sort top themes by size
+
+        # sort by size descending
         sorted_themes = sorted(step9, key=lambda x: x.get("size", 0), reverse=True)
         top_10 = sorted_themes[:10]
-        
+
         return GlobalInsightsResponse(
             total_dreams=total_dreams,
             unique_archetypes=unique_archetypes,
@@ -170,6 +157,6 @@ def get_global_insights():
             emotion_radar=global_radar,
             top_themes=[Theme(topic_label=t.get("topic_label", "Unknown"), size=t.get("size", 0)) for t in top_10]
         )
-        
+
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Data loading error: {str(exc)}")

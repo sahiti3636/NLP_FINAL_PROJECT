@@ -1,24 +1,21 @@
-# =============================================================
-# STEP 6: ENRICHED EMBEDDING CONSTRUCTION
-# =============================================================
-# Inputs
-#   dream_annotations.json         — segments from Steps 1-3
+# step 6: enriched embedding construction
+#
+# inputs:
+#   dream_annotations.json         — segments from steps 1-3
 #   step4_bilstm.pt                — trained NER + SRL weights
 #   step4_vocabs.pkl               — token / NER / SRL vocabs
 #
-# Outputs
+# outputs:
 #   step6_enriched_embeddings.npy  — (N, D) float32 matrix
 #   step6_metadata.json            — text + labels per row
 #
-# Vector layout  (D = 512 + NER_size + SRL_size + 8):
-#   [0        : 512           ]  BiLSTM mean-pooled embedding
+# vector layout (D = 512 + NER_size + SRL_size + 8):
+#   [0        : 512           ]  bilstm mean-pooled embedding
 #   [512      : 512+NER_size  ]  NER entity-type presence (multi-hot)
 #   [512+NER  : 512+NER+SRL   ]  SRL role presence        (multi-hot)
 #   [512+NER+SRL : end        ]  NRC emotion vector       (8-dim)
 #
-# NER_size and SRL_size are read directly from the loaded vocab
-# at runtime — no hardcoded constants that can fall out of sync.
-# =============================================================
+# NER_size and SRL_size come from the loaded vocab — never hardcode these
 
 import json
 import pickle
@@ -39,10 +36,7 @@ DIM_BILSTM  = 512
 DIM_EMOTION = len(NRC_EMOTIONS)   # 8
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 1 — MODEL LOADER
-# ════════════════════════════════════════════════════════════════
-
+# load step4 model + vocabs from disk, set to eval mode
 def load_model(device):
     print("Loading Step 4 model and vocabs...")
     with open("data_models/step4_vocabs.pkl", "rb") as f:
@@ -67,15 +61,9 @@ def load_model(device):
     return model, token_vocab, ner_vocab, srl_vocab
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 2 — SIGNAL BUILDERS
-# ════════════════════════════════════════════════════════════════
-
+# mean-pool encoder output over non-PAD tokens, returns (B, 512) numpy array
 def build_bilstm_embedding(encoder, padded, device):
-    """
-    Mean-pool BiLSTM hidden states over non-PAD tokens.
-    Returns np.ndarray (B, 512).
-    """
+    """mean-pool bilstm hidden states over non-PAD tokens — returns (B, 512)"""
     with torch.no_grad():
         enc_out = encoder(padded)                          # (B, T, 512)
     mask    = (padded != 0).float().unsqueeze(-1)          # (B, T, 1)
@@ -84,11 +72,11 @@ def build_bilstm_embedding(encoder, padded, device):
     return (summed / lengths).cpu().numpy().astype(np.float32)
 
 
+# binary vector over NER vocab indicating which entity types appeared
 def build_ner_multihot(ner_pred_seq, num_ner_labels):
     """
-    Multi-hot over actual vocab size (read at runtime).
-    Ignores PAD (0) and UNK (1) indices — they carry no
-    entity signal and should not activate any dimension.
+    multi-hot over vocab size (read at runtime, not hardcoded)
+    skips PAD=0 and UNK=1 — no entity signal there
     """
     vec = np.zeros(num_ner_labels, dtype=np.float32)
     for idx in ner_pred_seq:
@@ -97,11 +85,9 @@ def build_ner_multihot(ner_pred_seq, num_ner_labels):
     return vec
 
 
+# binary vector over SRL vocab indicating which roles appeared
 def build_srl_multihot(srl_pred_seq, num_srl_labels):
-    """
-    Multi-hot over actual vocab size (read at runtime).
-    Skips PAD=0 and UNK=1 for the same reason as NER.
-    """
+    """same as NER multi-hot — skips PAD=0 and UNK=1"""
     vec = np.zeros(num_srl_labels, dtype=np.float32)
     for idx in srl_pred_seq:
         if idx >= 2:
@@ -109,10 +95,11 @@ def build_srl_multihot(srl_pred_seq, num_srl_labels):
     return vec
 
 
+# pull NRC scores out of dict in fixed order, fallback to uniform
 def build_emotion_vector(emotion_dict):
     """
-    8-dim NRC vector in fixed NRC_EMOTIONS order.
-    Falls back to uniform if keys are missing.
+    8-dim NRC vector in fixed NRC_EMOTIONS order
+    falls back to uniform if keys are missing
     """
     vec = np.array(
         [emotion_dict.get(emo, 1.0 / DIM_EMOTION) for emo in NRC_EMOTIONS],
@@ -121,27 +108,17 @@ def build_emotion_vector(emotion_dict):
     return vec
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 3 — EMPTY SEGMENT GUARD
-#
-# Root cause of "mask of the first timestep must all be on":
-# Some segments in dream_annotations.json have empty token lists
-# (e.g. very short sentences that simple_tokenize reduces to []).
-# pad_sequence on an empty tensor produces a row of all zeros,
-# which makes CRF's mask[:,0] = False → ValueError.
-#
-# Fix: filter out empty segments before batching.
-# A zero-vector placeholder is stored for skipped segments so
-# the output matrix row count still equals len(segments).
-# ════════════════════════════════════════════════════════════════
+# why we guard against empty segments:
+# some segments in dream_annotations.json have empty token lists
+# (very short sentences that simple_tokenize reduces to []).
+# pad_sequence on an empty tensor makes CRF's mask[:,0] = False → ValueError.
+# fix: filter empties before batching, store zero-vector placeholder so
+# output row count still matches len(segments)
 
+# zero placeholder for empty segments so matrix row count stays correct
 def make_zero_vector(dim):
     return np.zeros(dim, dtype=np.float32)
 
-
-# ════════════════════════════════════════════════════════════════
-# SECTION 4 — MAIN ENRICHMENT LOOP
-# ════════════════════════════════════════════════════════════════
 
 def build_enriched_embeddings(
     data_path   = "jsons/dream_annotations.json",
@@ -159,7 +136,7 @@ def build_enriched_embeddings(
     model, token_vocab, ner_vocab, srl_vocab = load_model(device)
     encoder = model.encoder
 
-    # ── Dimensions read from actual vocab — never hardcoded ───
+    # dims from vocab — never hardcode these
     NUM_NER = len(ner_vocab)
     NUM_SRL = len(srl_vocab)
     DIM_TOTAL = DIM_BILSTM + NUM_NER + NUM_SRL + DIM_EMOTION
@@ -172,13 +149,11 @@ def build_enriched_embeddings(
           f"SRL {NUM_SRL} + Emotion {DIM_EMOTION})")
     print(f"{'='*55}\n")
 
-    # ── Pre-build token lists ─────────────────────────────────
     all_token_lists = []
     for seg in segments:
         toks = seg.get("tokens") or simple_tokenize(seg.get("text", ""))
         all_token_lists.append(toks)
 
-    # ── Count and report empty segments upfront ───────────────
     empty_count = sum(1 for t in all_token_lists if len(t) == 0)
     if empty_count:
         print(f"  Warning: {empty_count} empty segments found — "
@@ -194,15 +169,13 @@ def build_enriched_embeddings(
         batch_segs = segments[batch_start:batch_end]
         batch_toks = all_token_lists[batch_start:batch_end]
 
-        # ── Split batch into valid / empty ────────────────────
         valid_indices  = [i for i, t in enumerate(batch_toks) if len(t) > 0]
         empty_indices  = [i for i, t in enumerate(batch_toks) if len(t) == 0]
 
-        # ── Pre-fill placeholders for every position ──────────
         batch_enriched = [None] * len(batch_segs)
         batch_meta     = [None] * len(batch_segs)
 
-        # ── Handle empty segments — zero vector + minimal meta ─
+        # empty segments get zero vectors — keeps matrix row count correct
         for i in empty_indices:
             seg = batch_segs[i]
             batch_enriched[i] = make_zero_vector(DIM_TOTAL)
@@ -218,7 +191,6 @@ def build_enriched_embeddings(
             }
             skipped += 1
 
-        # ── Process valid segments ─────────────────────────────
         if valid_indices:
             valid_toks = [batch_toks[i] for i in valid_indices]
             valid_segs = [batch_segs[i] for i in valid_indices]
@@ -233,10 +205,8 @@ def build_enriched_embeddings(
                 token_id_tensors, batch_first=True, padding_value=0
             ).to(device)
 
-            # BiLSTM embeddings
             bilstm_embs = build_bilstm_embedding(encoder, padded, device)
 
-            # NER + SRL predictions
             with torch.no_grad():
                 outputs = model(padded)
             ner_preds_batch = outputs["ner_preds"]   # list of lists (CRF)
@@ -275,14 +245,12 @@ def build_enriched_embeddings(
         all_enriched.extend(batch_enriched)
         all_metadata.extend(batch_meta)
 
-    # ── Stack and save ────────────────────────────────────────
     embedding_matrix = np.stack(all_enriched, axis=0)
     np.save(output_emb, embedding_matrix)
 
     with open(output_meta, "w", encoding="utf-8") as f:
         json.dump(all_metadata, f, ensure_ascii=False)
 
-    # ── Summary ───────────────────────────────────────────────
     print(f"\nDone.")
     print(f"  Embedding matrix : {output_emb}  "
           f"shape={embedding_matrix.shape}")
@@ -290,7 +258,7 @@ def build_enriched_embeddings(
           f"({len(all_metadata)} records)")
     print(f"  Empty segments   : {skipped} (stored as zero vectors)")
 
-    # ── Sanity check: first 3 valid segments ──────────────────
+    # sanity check — spot check first 3 non-empty
     print("\nSample enriched vectors (first 3 non-empty segments):")
     shown = 0
     for i, m in enumerate(all_metadata):
@@ -331,10 +299,6 @@ def build_enriched_embeddings(
 
     return embedding_matrix, all_metadata
 
-
-# ════════════════════════════════════════════════════════════════
-# SECTION 5 — ENTRY POINT
-# ════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     build_enriched_embeddings(

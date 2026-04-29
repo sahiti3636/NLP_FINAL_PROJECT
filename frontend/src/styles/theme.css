@@ -1,6 +1,4 @@
-/* ============================================================
-   theme.css — Dreamscape Mapper design tokens & keyframes
-   ============================================================ */
+/* theme.css — design tokens & keyframes */
 
 :root {
   --bg:          #FFFFFF;
@@ -16,7 +14,6 @@
   --font-sans:   'Inter', system-ui, sans-serif;
 }
 
-/* ── Fade-Rise keyframes ─────────────────────────────────── */
 @keyframes fade-rise {
   from { opacity: 0; transform: translateY(32px); }
   to   { opacity: 1; transform: translateY(0);    }
@@ -27,7 +24,7 @@
   100% { background-position:  600px 0; }
 }
 
-/* ── Animation utility classes ───────────────────────────── */
+/* stagger classes for hero entrance */
 .fade-rise {
   animation: fade-rise 0.7s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
@@ -40,7 +37,7 @@
   animation: fade-rise 0.7s 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
-/* ── Glassmorphism helper ────────────────────────────────── */
+/* glassmorphism — webkit prefix needed for safari */
 .glass {
   background: var(--glass-bg);
   backdrop-filter: blur(18px) saturate(180%);
@@ -49,7 +46,7 @@
   border-radius: var(--radius);
 }
 
-/* ── Shimmer placeholder ─────────────────────────────────── */
+/* shimmer for loading placeholders */
 .shimmer {
   background: linear-gradient(
     90deg,

@@ -1,16 +1,15 @@
 """
-Dreamscape Mapper — Step 9
-Topic Label Generation — keyword-driven theme mapping
-Input  : step7_8_results.json
-Output : step9_results.json
+step 9 — topic label generation
+keyword-driven theme mapping
+input  : step7_8_results.json
+output : step9_results.json
 """
 
 import json
 from collections import Counter
 
-# ── Theme map — ordered by specificity (most specific first) ─────────────────
+# ordered by specificity — most specific first so we don't over-generalize
 THEME_MAP = [
-    # Specific vivid dream themes
     ("Flying & Levitation",           ["flying","flight","float","soar","hover","airborne","glide","wings","sky","altitude"]),
     ("Falling & Plunging",            ["falling","fell","plunge","drop","cliff","tumble","slip","edge","plummet","abyss"]),
     ("Chase & Pursuit",               ["chase","chasing","chased","escape","flee","pursuer","hunter","catch","running","cornered"]),
@@ -40,13 +39,14 @@ THEME_MAP = [
     ("Escape & Freedom",              ["escape","free","leave","away","exit","open","outside","ahead","quickly","fast","flee","break"]),
 ]
 
+# pick best theme from THEME_MAP by keyword overlap, fallback to emotion+kw combo
 def generate_label(keywords, dominant_emotion):
     if not keywords:
         return "Unclassified Dream Theme"
 
     kw_set = set(w.lower() for w in keywords)
 
-    # Score every theme — count how many trigger words match
+    # score every theme by how many trigger words appear in the keyword set
     scores = []
     for theme_name, trigger_words in THEME_MAP:
         score = sum(1 for t in trigger_words if t in kw_set)
@@ -55,16 +55,15 @@ def generate_label(keywords, dominant_emotion):
     scores.sort(reverse=True)
     best_score, best_theme = scores[0]
 
-    # Need at least 1 match; prefer 2+
+    # need at least 1 match — 2+ is better but we take what we can get
     if best_score >= 1:
         return best_theme
 
-    # Pure fallback — use emotion + top 2 keywords
+    # pure fallback — emotion + top 2 keywords
     top2 = " & ".join(keywords[:2]).title()
     emotion = dominant_emotion.title() if dominant_emotion not in ("unknown", "") else "Dream"
     return f"{emotion} Theme: {top2}"
 
-# ── Load and process ──────────────────────────────────────────────────────────
 with open("jsons/step7_8_results.json") as f:
     clusters = json.load(f)
 print(f"Loaded {len(clusters)} clusters.")
@@ -78,12 +77,11 @@ for cluster in clusters:
     label_counts[label] += 1
     results.append(cluster)
 
-# ── Save ──────────────────────────────────────────────────────────────────────
 with open("jsons/step9_results.json", "w") as f:
     json.dump(results, f, indent=2)
 print(f"Saved step9_results.json with {len(results)} clusters.")
 
-# ── Sanity check ──────────────────────────────────────────────────────────────
+# sanity check
 print("\nSample output (5 largest clusters):")
 sorted_by_size = sorted(results, key=lambda x: -x["size"])[:5]
 for r in sorted_by_size:

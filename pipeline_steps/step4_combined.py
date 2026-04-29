@@ -1,16 +1,12 @@
-# =============================================================
-# STEP 4: MULTI-TASK BiLSTM  (NER + SRL)
-# =============================================================
-# Step 5 (emotion) is now handled by NRC Lexicon in Steps 1-3.
-# This file only trains and saves the NER + SRL model.
+# step 4: multi-task bilstm (NER + SRL)
+# step 5 (emotion) is handled by NRC in steps 1-3 now, not here
 #
-# Outputs
-#   step4_bilstm.pt   — NER + SRL model weights
+# outputs:
+#   step4_bilstm.pt   — NER + SRL weights
 #   step4_vocabs.pkl  — token / NER / SRL vocabs
 #
-# Install deps:
+# install deps:
 #   pip install torch torchcrf
-# =============================================================
 
 import json
 import re
@@ -24,15 +20,11 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchcrf import CRF
 
-# NRC canonical 8-emotion labels (matches steps1_3_pipeline.py)
+# matches steps1_3_pipeline.py — fixed order, never change
 NRC_EMOTIONS = ["anger", "anticipation", "disgust", "fear",
                 "joy", "sadness", "surprise", "trust"]
 NUM_EMOTIONS = len(NRC_EMOTIONS)   # 8
 
-
-# ════════════════════════════════════════════════════════════════
-# SECTION 1 — VOCABULARY
-# ════════════════════════════════════════════════════════════════
 
 class Vocab:
     def __init__(self):
@@ -55,15 +47,13 @@ class Vocab:
         return self._next
 
 
+# lowercase regex tokenizer — identical to steps1_3, must never diverge
 def simple_tokenize(text: str):
-    """Identical to steps1_3_pipeline.py — must never diverge."""
+    """identical to steps1_3_pipeline.py — must never diverge"""
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 2 — VOCAB BUILDERS & LABEL ALIGNMENT
-# ════════════════════════════════════════════════════════════════
-
+# init all three vocabs and add fixed NER/SRL tag sets before seeing data
 def build_vocabs(annotated_segments):
     token_vocab, ner_vocab, srl_vocab = Vocab(), Vocab(), Vocab()
 
@@ -104,6 +94,7 @@ LABEL_MAP = {
 }
 
 
+# align entity spans to token positions, produce BIO label id sequence
 def align_ner_labels(tokens, entities, ner_vocab):
     label_seq = ["O"] * len(tokens)
     for ent_text, ent_label in entities:
@@ -123,6 +114,7 @@ def align_ner_labels(tokens, entities, ner_vocab):
     return [ner_vocab.encode(l) for l in label_seq]
 
 
+# align SRL verb+arg spans to token positions, produce role id sequence
 def align_srl_labels(tokens, relations, srl_vocab):
     label_seq = ["O"] * len(tokens)
     for rel in relations:
@@ -150,10 +142,6 @@ def align_srl_labels(tokens, relations, srl_vocab):
     return [srl_vocab.encode(l) for l in label_seq]
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 3 — DATASET
-# ════════════════════════════════════════════════════════════════
-
 class DreamSegmentDataset(Dataset):
     def __init__(self, annotated_segments, token_vocab, ner_vocab, srl_vocab):
         self.samples = []
@@ -170,6 +158,7 @@ class DreamSegmentDataset(Dataset):
     def __getitem__(self, idx): return self.samples[idx]
 
 
+# pad variable-length sequences in a batch to the same length
 def collate_fn(batch):
     token_ids, ner_labels, srl_labels = zip(*batch)
     return (
@@ -178,10 +167,6 @@ def collate_fn(batch):
         pad_sequence(srl_labels, batch_first=True, padding_value=0),
     )
 
-
-# ════════════════════════════════════════════════════════════════
-# SECTION 4 — MODEL ARCHITECTURE
-# ════════════════════════════════════════════════════════════════
 
 class SharedBiLSTMEncoder(nn.Module):
     def __init__(self, vocab_size, embed_dim=128, hidden_size=256,
@@ -261,10 +246,7 @@ class DreamscapeMultiTaskBiLSTM(nn.Module):
         }
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 5 — TRAINING LOOP
-# ════════════════════════════════════════════════════════════════
-
+# one train or eval pass over a dataloader — returns avg losses
 def run_epoch(model, loader, optimizer, device, train: bool):
     model.train() if train else model.eval()
     total = ner_sum = srl_sum = 0.0
@@ -288,6 +270,7 @@ def run_epoch(model, loader, optimizer, device, train: bool):
     return total / n, ner_sum / n, srl_sum / n
 
 
+# full step 4 training run — builds vocabs, trains model, saves weights + vocabs
 def train_step4(data_path="jsons/dream_annotations.json"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n{'='*55}")

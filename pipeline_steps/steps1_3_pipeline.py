@@ -1,13 +1,9 @@
-# =============================================================
-# STEPS 1 – 3: DATA INGESTION, PREPROCESSING & SILVER ANNOTATION
-# =============================================================
-# Outputs
-#   dream_annotations.json  — one record per sentence segment
-# =============================================================
-# Install deps:
+# steps 1-3: data ingestion, preprocessing & silver annotation
+# outputs: dream_annotations.json — one record per sentence segment
+#
+# install deps:
 #   pip install spacy nrclex pandas pyarrow
 #   python -m spacy download en_core_web_sm
-# =============================================================
 
 import json
 import time
@@ -17,26 +13,19 @@ import pandas as pd
 import spacy
 from nrclex import NRCLex
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 1 — MODEL LOADING
-# ════════════════════════════════════════════════════════════════
-
 print("Loading models...")
 
 nlp = spacy.load("en_core_web_sm")
 nlp.add_pipe("sentencizer", first=True)
 
-# NRC canonical 8 emotions (fixed order — never change this list)
+# fixed order — never change this list or downstream breaks
 NRC_EMOTIONS = ["anger", "anticipation", "disgust", "fear",
                 "joy", "sadness", "surprise", "trust"]
 
 print("Models ready.\n")
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 2 — STEP 1: DATA INGESTION
-# ════════════════════════════════════════════════════════════════
-
+# pull dreams from HuggingFace parquet, optionally cap count
 def load_dreambank(limit=None):
     print("Loading DreamBank dataset...")
     df = pd.read_parquet(
@@ -51,23 +40,20 @@ def load_dreambank(limit=None):
     return dreams
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 3 — STEP 2: PREPROCESSING HELPERS
-# ════════════════════════════════════════════════════════════════
-
+# lowercase + regex split — shared with step4, never change
 def simple_tokenize(text: str):
     """
-    Lowercase + split on non-alphanumeric.
-    Identical to step4_5_combined.py — must never diverge.
+    lowercase + split on non-alphanumeric
+    identical to step4_combined.py — must never diverge
     """
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
+# same as simple_tokenize but works on a spacy doc
 def filter_tokens(doc):
     """
-    Punct-filtered lowercase token list from a SpaCy doc.
-    Applies the same regex as simple_tokenize per token so
-    indices stay consistent across the entire pipeline.
+    punct-filtered token list from spacy doc
+    same regex as simple_tokenize so indices stay consistent
     """
     result = []
     for t in doc:
@@ -75,12 +61,11 @@ def filter_tokens(doc):
     return result
 
 
+# convert spacy token iter to filtered list so spans align with stored tokens
 def span_to_filtered_tokens(spacy_token_iter):
     """
-    Convert any iterable of SpaCy Token objects to the same
-    punct-filtered list that filter_tokens produces.
-    Used for building NER/SRL span strings that exactly match
-    the stored token list (fixes the old span-mismatch bug).
+    convert spacy Token objects to the same punct-filtered list as filter_tokens
+    fixes old span-mismatch bug where entity text didn't align with stored tokens
     """
     result = []
     for t in spacy_token_iter:
@@ -88,10 +73,7 @@ def span_to_filtered_tokens(spacy_token_iter):
     return result
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 4 — STEP 3a: SILVER NER
-# ════════════════════════════════════════════════════════════════
-
+# spacy → pipeline label mapping
 SPACY_TO_PIPELINE_LABEL = {
     "PERSON":      "PER",
     "GPE":         "GPE",
@@ -112,6 +94,7 @@ SPACY_TO_PIPELINE_LABEL = {
     "PERCENT":     "MISC",
 }
 
+# dream-specific entity vocab — spacy won't catch these
 DREAM_SURREAL = {
     "shadow", "darkness", "void", "abyss", "monster", "creature",
     "beast", "ghost", "spirit", "demon", "angel", "dragon", "witch",
@@ -144,6 +127,7 @@ DREAM_LOCATION = {
 }
 
 
+# tag dream-specific tokens spacy misses (surreal, body, object, location)
 def apply_dream_rules(filtered_tokens):
     extra = []
     for tok in filtered_tokens:
@@ -158,6 +142,7 @@ def apply_dream_rules(filtered_tokens):
     return extra
 
 
+# combine spacy NER + dream rules into a deduplicated entity list
 def extract_entities(doc, filtered_tokens):
     entities = []
     seen = set()
@@ -174,10 +159,6 @@ def extract_entities(doc, filtered_tokens):
     return entities
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 5 — STEP 3b: SILVER SRL
-# ════════════════════════════════════════════════════════════════
-
 TIME_PREPS = {"on", "in", "before", "after", "during", "since", "until", "by"}
 DIR_PREPS  = {"to", "toward", "towards", "into", "onto", "from", "off", "out", "through"}
 
@@ -188,10 +169,11 @@ TIME_NOUNS = {
 }
 
 
+# minimal noun phrase around a head token — avoids pulling in whole clauses
 def _tight_np(head_token):
     """
-    Tight NP: det + amod + compound + head only.
-    Stops before prep/clause nodes to prevent cross-clause bleed.
+    tight noun phrase: det + amod + compound + head only
+    stops before prep/clause nodes to avoid cross-clause bleed
     """
     SAFE_DEPS = {"det", "amod", "compound", "poss", "nummod", "nn", "nmod"}
     collected = {head_token}
@@ -204,6 +186,7 @@ def _tight_np(head_token):
     return sorted(collected, key=lambda t: t.i)
 
 
+# true if a prepositional object is a time reference
 def _is_temporal_pobj(pobj_token):
     if pobj_token.ent_type_ in ("DATE", "TIME"):
         return True
@@ -212,6 +195,7 @@ def _is_temporal_pobj(pobj_token):
     return False
 
 
+# extract verb + arg roles (ARG0/1/2 + modifiers) from dependency tree
 def extract_srl(doc, filtered_tokens):
     relations = []
 
@@ -295,10 +279,7 @@ def extract_srl(doc, filtered_tokens):
     return relations
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 6 — STEP 3c: SILVER COREFERENCE
-# ════════════════════════════════════════════════════════════════
-
+# basic pronoun resolution — "i/me/my" → "the dreamer", others → last seen person
 PRONOUN_MAP = {
     "i": "the dreamer", "me": "the dreamer", "my": "the dreamer",
     "myself": "the dreamer", "mine": "the dreamer",
@@ -310,6 +291,7 @@ PRONOUN_MAP = {
 }
 
 
+# map pronouns to referents — very basic, just covers i/me and last seen person
 def resolve_coref(doc):
     substitutions = []
     last_person = None
@@ -327,51 +309,33 @@ def resolve_coref(doc):
     return substitutions
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 7 — STEP 3d: NRC EMOTION VECTORS
-#
-# Replaces GoEmotions BERT entirely.
-#
-# WHY NRC INSTEAD OF GOEMOTIONS:
-#   GoEmotions was trained on Reddit comments — short reactive
-#   social text. Dream narratives are symbolic and first-person
-#   experiential. "teeth shattered in a mirror" has no Reddit
-#   analogue so the model pattern-matched "laughing" → amusement.
-#
-#   NRC Emotion Lexicon maps ~14,000 words to 8 emotions via
-#   crowdsourced human annotation. It covers abstract and symbolic
-#   vocabulary (teeth → fear, mirror → disgust/fear) which makes
-#   it far more appropriate for dream text.
-#
-#   Output: 8-dim normalised float vector per segment.
-#   Columns follow NRC_EMOTIONS order (fixed at top of file).
-# ════════════════════════════════════════════════════════════════
-
+# run NRC lexicon on text and return normalized 8-dim emotion dict
 def get_nrc_emotion_vector(text: str) -> dict:
     """
-    Returns a normalised dict {emotion: score} for all 8 NRC emotions.
-    Scores are raw lexicon hit counts normalised to sum to 1.
-    If no lexicon words are found, returns uniform distribution.
+    normalized 8-dim NRC emotion scores
+    falls back to uniform if no lexicon hits — better than zeros downstream
+    
+    why NRC instead of GoEmotions:
+    goemotions was trained on reddit — short reactive social text.
+    dream narratives are symbolic and first-person experiential.
+    "teeth shattered in a mirror" has no reddit analogue.
+    NRC covers abstract/symbolic vocab (teeth → fear, mirror → disgust)
+    which actually makes sense for dreams
     """
     nrc    = NRCLex(text)
     raw    = nrc.raw_emotion_scores
 
-    # Keep only the 8 canonical emotions, fill missing with 0
     scores = {emo: raw.get(emo, 0) for emo in NRC_EMOTIONS}
     total  = sum(scores.values())
 
     if total == 0:
-        # No lexicon hits — return uniform so downstream gets a
-        # non-zero vector rather than a meaningless zero vector
+        # uniform so downstream gets a non-zero vector
         return {emo: round(1.0 / len(NRC_EMOTIONS), 4) for emo in NRC_EMOTIONS}
 
     return {emo: round(scores[emo] / total, 4) for emo in NRC_EMOTIONS}
 
 
-# ════════════════════════════════════════════════════════════════
-# SECTION 8 — MAIN PIPELINE
-# ════════════════════════════════════════════════════════════════
-
+# full steps 1-3 run: ingest → segment → annotate → save
 def run_pipeline(limit=None):
     start = time.time()
 
@@ -380,7 +344,6 @@ def run_pipeline(limit=None):
         print("No dreams loaded. Exiting.")
         return
 
-    # ── Step 2: Sentence segmentation (fast pass) ─────────────
     print("Segmenting dreams into sentences...")
     all_sentences = []
     for doc in nlp.pipe(dreams, disable=["ner", "parser"], batch_size=256):
@@ -390,7 +353,6 @@ def run_pipeline(limit=None):
                 all_sentences.append(text)
     print(f"Total sentence segments: {len(all_sentences)}")
 
-    # ── Step 3a/b/c: NER + SRL + Coref ───────────────────────
     print("Running NER, SRL, and coreference extraction...")
     final_results = []
     for doc in nlp.pipe(all_sentences, batch_size=128):
@@ -399,7 +361,6 @@ def run_pipeline(limit=None):
         relations       = extract_srl(doc, filtered_tokens)
         coref           = resolve_coref(doc)
 
-        # ── Step 3d: NRC emotion vector (CPU, no GPU needed) ──
         emotion_vector = get_nrc_emotion_vector(doc.text)
 
         final_results.append({
@@ -411,7 +372,6 @@ def run_pipeline(limit=None):
             "emotion_vector": emotion_vector,
         })
 
-    # ── Save ──────────────────────────────────────────────────
     print("Saving dream_annotations.json...")
     with open("jsons/dream_annotations.json", "w", encoding="utf-8") as f:
         json.dump(final_results, f, ensure_ascii=False, indent=2)
@@ -419,7 +379,7 @@ def run_pipeline(limit=None):
     elapsed = time.time() - start
     print(f"\nDone. {len(final_results)} segments saved. ({elapsed:.1f}s)")
 
-    # ── Sanity check: first 3 segments ────────────────────────
+    # sanity check first 3
     for sample in final_results[:3]:
         print(f"\n{'─'*60}")
         print(f"TEXT   : {sample['text']}")

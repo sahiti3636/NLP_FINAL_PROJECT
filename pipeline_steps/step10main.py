@@ -6,13 +6,14 @@ STEP10_PROFILES_OUT = "jsons/step10_emotion_profiles.json"
 STEP10_FINAL_OUT = "jsons/step10_final_results.json"
 
 
+# re-derive dominant emotion from step9 emotion_avg dicts
 def recompute_from_step9_json(step9_data):
     profiles = []
 
     for c in step9_data:
         avg = c.get("emotion_avg", {})
 
-        # safely compute total even if values are strings
+        # values might be strings if json was edited manually — coerce to float
         total = sum(float(v) for v in avg.values()) if avg else 0.0
 
         if total == 0.0:
@@ -31,6 +32,7 @@ def recompute_from_step9_json(step9_data):
     return profiles
 
 
+# join step9 cluster metadata with step10 emotion profiles by cluster_id
 def merge_with_step9(step9_data, step10_profiles):
     step10_index = {
         p["cluster_id"]: p for p in step10_profiles
@@ -67,31 +69,27 @@ def merge_with_step9(step9_data, step10_profiles):
     return final_results
 
 
+# entry point — load, recompute, merge, save
 def main():
     print("=" * 60)
     print("STEP 10 - DOMINANT EMOTION COMPUTATION")
     print("=" * 60)
 
-    # load step 9
     with open(STEP9_RESULTS_PATH, "r") as f:
         step9_data = json.load(f)
 
     print("Loaded {} clusters from Step 9".format(len(step9_data)))
 
-    # compute profiles
     profiles = recompute_from_step9_json(step9_data)
 
-    # save emotion profiles
     with open(STEP10_PROFILES_OUT, "w") as f:
         json.dump(profiles, f, indent=2)
 
-    # merge final results
     final_results = merge_with_step9(step9_data, profiles)
 
     with open(STEP10_FINAL_OUT, "w") as f:
         json.dump(final_results, f, indent=2)
 
-    # quick summary
     emotion_counts = defaultdict(int)
 
     for p in profiles:
